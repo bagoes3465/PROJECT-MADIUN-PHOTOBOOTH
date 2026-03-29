@@ -23,9 +23,11 @@ class Settings(BaseSettings):
     api_port: int = 8000
     debug: bool = True
 
-    # AI Enhancement
-    nano_banana_api_key: str = ""
-    nano_banana_base_url: str = "https://api.apifree.ai"
+    # AI Enhancement - APIFree.ai (Nano Banana Pro Edit)
+    apifree_api_key: str = ""
+    apifree_model: str = "google/nano-banana-pro/edit"
+    apifree_base_url: str = "https://api.apifree.ai"
+    apifree_timeout_seconds: int = 300
 
     # ML Model Paths
     face_expression_model_path: str = str(

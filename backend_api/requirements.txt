@@ -29,6 +29,14 @@ qrcode[pil]==7.4.2
 # HTTP
 requests==2.32.0
 httpx==0.27.0
+huggingface-hub==0.34.4
+diffusers==0.31.0
+transformers==4.44.2
+accelerate==0.34.2
+safetensors==0.4.5
+
+# Google AI Studio (Gemini)
+google-generativeai
 
 # Utils
 aiofiles==24.1.0

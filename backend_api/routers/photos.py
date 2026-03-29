@@ -226,7 +226,7 @@ async def process_photo(body: ProcessPhotoRequest):
 
         # Process
         filter_config = ai_filter.get("config", {}) if ai_filter else {}
-        result_img = process_photobooth(person_img, bg_img, mascot_img, filter_config)
+        result_img, ai_processed = process_photobooth(person_img, bg_img, mascot_img, filter_config)
 
         # Update status: ai_enhance
         db.table("photo_processing").update({"status": "ai_enhance"}).eq("id", processing_id).execute()
@@ -297,6 +297,7 @@ async def process_photo(body: ProcessPhotoRequest):
                 "download_url": download_url,
                 "qr_code_url": qr_url,
                 "processing_time_ms": processing_time_ms,
+                "ai_processed": ai_processed,
             },
         }
 
