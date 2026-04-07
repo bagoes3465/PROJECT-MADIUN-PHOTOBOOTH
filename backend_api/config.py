@@ -23,9 +23,9 @@ class Settings(BaseSettings):
     api_port: int = 8000
     debug: bool = True
 
-    # AI Enhancement - APIFree.ai (Nano Banana Pro Edit)
+    # AI Enhancement - APIFree.ai (Nano Banana 2 Edit)
     apifree_api_key: str = ""
-    apifree_model: str = "google/nano-banana-pro/edit"
+    apifree_model: str = "google/nano-banana-2/edit"
     apifree_base_url: str = "https://api.apifree.ai"
     apifree_timeout_seconds: int = 300
 

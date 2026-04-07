@@ -14,7 +14,6 @@ function App() {
   const [sessionData, setSessionData] = useState(null);
   const [photoData, setPhotoData] = useState(null);
   const [capturedImage, setCapturedImage] = useState(null);
-  const [previewNoBgUrl, setPreviewNoBgUrl] = useState(null);
   const [customization, setCustomization] = useState(null);
   const [resultData, setResultData] = useState(null);
   const [errorInfo, setErrorInfo] = useState({ message: '', detail: '' });
@@ -24,7 +23,6 @@ function App() {
     setSessionData(null);
     setPhotoData(null);
     setCapturedImage(null);
-    setPreviewNoBgUrl(null);
     setCustomization(null);
     setResultData(null);
     setErrorInfo({ message: '', detail: '' });
@@ -46,7 +44,7 @@ function App() {
     }
   };
 
-  // Camera → Customize: upload photo
+  // Camera → Uploading → Customize: upload photo
   const handleCaptured = async (dataUrl) => {
     try {
       if (!sessionData?.session_id) {
@@ -54,9 +52,9 @@ function App() {
         return;
       }
       setCapturedImage(dataUrl);
+      setPage('uploading');
       const photo = await api.uploadPhoto(sessionData.session_id, dataUrl);
       setPhotoData(photo);
-      setPreviewNoBgUrl(photo.preview_nobg_url || null);
       setPage('customize');
     } catch (err) {
       showError('Gagal mengunggah foto', err.message);
@@ -91,10 +89,20 @@ function App() {
       {page === 'camera' && (
         <Camera onBack={resetAll} onCaptured={handleCaptured} />
       )}
+      {page === 'uploading' && (
+        <div className="pb-page">
+          <div className="pb-uploading-container">
+            <img src={capturedImage} alt="Captured" className="pb-uploading-preview" />
+            <div className="pb-uploading-overlay">
+              <div className="pb-uploading-spinner" />
+              <p className="pb-uploading-text">Mengunggah foto...</p>
+            </div>
+          </div>
+        </div>
+      )}
       {page === 'customize' && (
         <Customize
           capturedImage={capturedImage}
-          previewNoBgUrl={previewNoBgUrl}
           onBack={() => setPage('camera')}
           onNext={handleCustomize}
         />

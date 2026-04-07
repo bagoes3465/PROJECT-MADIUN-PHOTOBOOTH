@@ -38,7 +38,12 @@ export const api = {
 
   // Photos
   uploadPhoto: async (sessionId, dataUrl) => {
-    const blob = await fetch(dataUrl).then((r) => r.blob());
+    const [header, b64] = dataUrl.split(',');
+    const mime = header.match(/:(.*?);/)[1];
+    const bin = atob(b64);
+    const arr = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+    const blob = new Blob([arr], { type: mime });
     const form = new FormData();
     form.append('session_id', sessionId);
     form.append('photo', blob, 'photo.png');

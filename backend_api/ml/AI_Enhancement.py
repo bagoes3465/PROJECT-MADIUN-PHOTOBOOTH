@@ -1,5 +1,5 @@
 """
-AI Photobooth - APIFree.ai (Nano Banana Pro Edit) pipeline
+AI Photobooth - APIFree.ai (Nano Banana 2 Edit) pipeline
 """
 import io
 import numpy as np
@@ -76,7 +76,7 @@ def _smooth_edges(image: Image.Image) -> Image.Image:
     return Image.fromarray(img_array, "RGBA")
 
 
-# ── APIFree.ai Pipeline (Flux 2 DEV Edit) ────────────────
+# ── APIFree.ai Pipeline (Nano Banana 2 Edit) ────────────────
 
 def _is_apifree_enabled() -> bool:
     """Check if APIFree.ai API key is configured."""
@@ -84,24 +84,33 @@ def _is_apifree_enabled() -> bool:
     return bool(key)
 
 
-def _upload_temp_image_to_supabase(image: Image.Image) -> str:
+def _upload_temp_image_to_supabase(image: Image.Image, max_retries: int = 3) -> str:
     """Upload image to Supabase storage temporarily and return a public URL."""
     import uuid
+    import time
     from database import get_supabase
 
     db = get_supabase()
     img_bytes = _image_to_png_bytes(image.convert("RGB"))
     storage_path = f"temp_ai/{uuid.uuid4().hex}.png"
 
-    db.storage.from_("photos").upload(
-        storage_path,
-        img_bytes,
-        {"content-type": "image/png"},
-    )
-
-    public_url = db.storage.from_("photos").get_public_url(storage_path)
-    print(f"[AI] Uploaded temp image to Supabase: {storage_path}")
-    return public_url
+    for attempt in range(max_retries):
+        try:
+            db.storage.from_("photos").upload(
+                storage_path,
+                img_bytes,
+                {"content-type": "image/png"},
+            )
+            public_url = db.storage.from_("photos").get_public_url(storage_path)
+            print(f"[AI] Uploaded temp image to Supabase: {storage_path}")
+            return public_url
+        except (ConnectionError, ConnectionResetError, OSError) as e:
+            if attempt < max_retries - 1:
+                wait = 2 * (attempt + 1)
+                print(f"[AI] Upload retry {attempt + 1}/{max_retries} after {wait}s: {e}")
+                time.sleep(wait)
+            else:
+                raise
 
 
 def _cleanup_temp_image(storage_path: str):
@@ -121,7 +130,7 @@ def _run_apifree_cartoon_merge(
     prompt_suffix: str = "",
     mascot_img: Image.Image | None = None,
 ) -> Image.Image:
-    """Use APIFree.ai (Nano Banana Pro Edit) with 3 images: composite + face ref + mascot ref."""
+    """Use APIFree.ai (Nano Banana 2 Edit) with 3 images: composite + face ref + mascot ref."""
     import time
     import requests as req
 
@@ -129,7 +138,7 @@ def _run_apifree_cartoon_merge(
     if not api_key:
         raise RuntimeError("APIFREE_API_KEY belum dikonfigurasi.")
 
-    model_name = "google/nano-banana-pro/edit"
+    model_name = settings.apifree_model
     base_url = (settings.apifree_base_url or "https://api.apifree.ai").strip().rstrip("/")
     timeout = max(60, int(settings.apifree_timeout_seconds or 300))
 
@@ -161,12 +170,28 @@ def _run_apifree_cartoon_merge(
         "image_urls": image_urls,
         "aspect_ratio": aspect_ratio,
         "resolution": "1K",
+        "width": cw,
+        "height": ch,
+        "seed": 42,
+        "guidance_scale": 12.0,
     }
 
     print(f"[AI] APIFree.ai submitting {len(image_urls)} images model={model_name} aspect={aspect_ratio}")
 
-    # 1. Submit request
-    resp = req.post(f"{base_url}/v1/image/submit", headers=headers, json=payload, timeout=timeout)
+    # 1. Submit request (with retry for transient connection errors)
+    resp = None
+    for attempt in range(3):
+        try:
+            resp = req.post(f"{base_url}/v1/image/submit", headers=headers, json=payload, timeout=timeout)
+            break
+        except (ConnectionError, req.exceptions.ConnectionError, OSError) as e:
+            if attempt < 2:
+                wait = 3 * (attempt + 1)
+                print(f"[AI] APIFree.ai submit retry {attempt + 1}/3 after {wait}s: {e}")
+                import time
+                time.sleep(wait)
+            else:
+                raise RuntimeError(f"APIFree.ai connection failed after 3 retries: {e}")
 
     if resp.status_code != 200:
         raise RuntimeError(f"APIFree.ai submit error {resp.status_code}: {resp.text[:500]}")
@@ -226,63 +251,44 @@ def _run_apifree_cartoon_merge(
 
 
 def _build_apifree_prompt(prompt_suffix: str = "", has_mascot_ref: bool = False) -> str:
-    """Prompt for Nano Banana Pro Edit: 3 images input."""
+    """Build prompt for APIFree.ai edit model (max 2500 chars)."""
     if has_mascot_ref:
         image_desc = (
-            "I am providing 3 images. "
-            "Image 1 is the MAIN SCENE: a photobooth composite with a background, a mascot character on the left, and a real person on the right. "
-            "Image 2 is the PERSON FACE REFERENCE: the original unedited photo of the person — use this to preserve the person's face exactly. "
-            "Image 3 is the MASCOT IDENTITY REFERENCE: the original mascot character — use this to preserve the mascot's exact design and appearance. "
+            "3 images. Image1: photobooth scene (background+mascot left+person right). "
+            "Image2: person face reference. Image3: mascot identity reference. "
         )
     else:
         image_desc = (
-            "I am providing 2 images. "
-            "Image 1 is the MAIN SCENE: a photobooth composite with a background, a mascot character on the left, and a real person on the right. "
-            "Image 2 is the PERSON FACE REFERENCE: the original unedited photo of the person. "
+            "2 images. Image1: photobooth scene (background+person on right side). "
+            "Image2: person face reference. "
         )
 
     prompt = (
         image_desc +
 
-        "Task: Enhance Image 1 into a premium cinematic photobooth photo where the mascot and the person are POSING TOGETHER like friends. "
+        "Enhance Image1 into a professional photobooth photo. "
 
-        "MASCOT INTERACTION RULE — KEY GOAL: "
-        "Make the mascot and the person interact naturally like they are best friends posing for a photo together. "
-        "The mascot should look lively and engaged — for example: giving a thumbs up, waving, pointing at the person, "
-        "doing a peace sign, high-fiving, or standing shoulder-to-shoulder with the person. "
-        "The person and mascot should look like they are having fun together at a festive event. "
-        "Adjust the mascot's pose slightly to create a natural friendly interaction. "
+        "PRESERVE FROM IMAGE1: "
+        "- Same background location, buildings, sky. "
+        "- ALL people visible — if 2 people in Image1, keep 2 people. "
+        "- Person face identical to Image2 (face shape, eyes, nose, lips, skin, hair, glasses). "
+        "- Person body shape, clothing, shirt pattern, pants, shoes — exactly as Image1. "
+        "- People must look like real photographic humans, not 3D cartoon. "
 
-        "MASCOT IDENTITY RULE — HIGHEST PRIORITY: "
-        "The mascot is a specific pre-designed cartoon character. "
-        + ("Image 3 shows the EXACT original mascot design — the output mascot MUST keep the same identity as Image 3. " if has_mascot_ref else "") +
-        "Keep the mascot's IDENTITY: same character design, same colors, same outfit, same art style. "
-        "You may adjust the mascot's POSE slightly for interaction, but do NOT change its identity or design. "
-        "Do NOT add realistic texture, plush, fur, felt, or fabric. Keep the cartoon art style. "
+        "MASCOT: "
+        + ("Match Image3 identity exactly including text/labels on mascot. " if has_mascot_ref else "") +
+        "Keep mascot anatomy identical to Image3. Do NOT add or remove limbs. "
+        "Render mascot as high-quality 3D CGI character with scene-matching lighting. "
 
-        "CRITICAL FACE RULE: "
-        "The person's face MUST match Image 2 exactly. "
-        "Do NOT generate a new face. Keep exact same features, skin tone, hairstyle, glasses. "
+        "COMPOSITION: Mascot left, people right, all full body head to feet, no cropping. "
+        "Subjects well-lit, clearly visible. Gentle background blur, subtle depth of field. "
+        "Natural lighting, soft ground shadows. "
 
-        "LAYOUT RULE: "
-        "BOTH the person AND the mascot MUST be shown FULL BODY from head to feet. "
-        "Do NOT crop or zoom. Keep mascot on left, person on right. "
-        "The mascot and person should be close together, not far apart. "
-
-        "CLOTHING RULE: Keep the person's clothing exactly as is. "
-
-        "Allowed enhancements: cinematic lighting, soft glowing particles, "
-        "golden sparkles, festive atmosphere, vibrant color grading, "
-        "natural shadows, soft depth of field, confetti, bokeh. "
-
-        "Style: professional event photobooth photography, ultra detailed, fun and lively. "
-
-        "Do NOT add text, watermark, logo. "
-        "Do NOT add extra people or characters."
+        "No watermark or logo."
     )
 
     if prompt_suffix:
-        prompt += f" {prompt_suffix}"
+        prompt += f" Style: {prompt_suffix}"
 
     return prompt
 
@@ -291,15 +297,26 @@ def _build_negative_prompt() -> str:
     return (
         "different person, new face, altered face, different clothes, different outfit, "
         "different hairstyle, distorted anatomy, extra arms, extra legs, "
+        "deformed hands, wrong number of fingers, bent limbs, stretched limbs, "
+        "changed body shape, fatter body, thinner body, altered proportions, "
+        "cartoon person, stylized person, painted skin, anime person, "
+        "3D rendered person, pixar person, animated person, CGI person, "
+        "distorted mascot, deformed mascot, broken mascot anatomy, "
+        "extra limbs on mascot, extra legs on mascot, extra arms on mascot, "
         "changed clothing texture, painted clothing, canvas texture on clothes, "
 
-        "extra character, extra person, mascot, cartoon character, puppet, doll, "
+        "removed person, missing person, puppet, doll, "
 
         "cropped body, half body, close up, zoomed in, "
 
+        "sparkles, glitter, light particles, magical effects, golden glow, lens flare, "
+
+        "different background, missing background, blank background, white background, "
+        "changed background, replaced background, "
+
         "blurry, low quality, bad lighting, "
 
-        "text, watermark, logo, title, written words"
+        "watermark, logo"
     )
 
 
@@ -414,6 +431,19 @@ def _compose_reference_scene(
     mascot_y = max(0, bg_h - mascot_rgba.height - int(bg_h * 0.06))
     person_y = max(0, bg_h - person_rgba.height - int(bg_h * 0.04))
 
+    # Apply strong depth-based bokeh to background (cinematic shallow DOF)
+    subject_regions = [
+        (mascot_x, mascot_y, mascot_rgba.width, mascot_rgba.height),
+        (person_x, person_y, person_rgba.width, person_rgba.height),
+    ]
+    bg = _apply_depth_bokeh(bg, subject_regions, strength=2.5)
+
+    # Apply golden hour warm color grading to the background
+    bg_rgb = _apply_golden_hour_grading(bg.convert("RGB"), intensity=0.35)
+    bg = bg_rgb.convert("RGBA")
+    # Restore alpha
+    bg.putalpha(255)
+
     bg = _add_ground_shadow(bg, mascot_x, mascot_y, mascot_rgba.width, mascot_rgba.height)
     bg.alpha_composite(mascot_rgba, (mascot_x, mascot_y))
     bg = _add_ground_shadow(bg, person_x, person_y, person_rgba.width, person_rgba.height)
@@ -439,6 +469,17 @@ def _compose_scene_without_mascot(
     person_x = bg_w - person_rgba.width - right_margin
     person_x = max(0, min(person_x, bg_w - person_rgba.width))
     person_y = max(0, bg_h - person_rgba.height - int(bg_h * 0.04))
+
+    # Apply strong depth-based bokeh (cinematic shallow DOF)
+    subject_regions = [
+        (person_x, person_y, person_rgba.width, person_rgba.height),
+    ]
+    bg = _apply_depth_bokeh(bg, subject_regions, strength=2.5)
+
+    # Apply golden hour warm color grading
+    bg_rgb = _apply_golden_hour_grading(bg.convert("RGB"), intensity=0.35)
+    bg = bg_rgb.convert("RGBA")
+    bg.putalpha(255)
 
     bg = _add_ground_shadow(bg, person_x, person_y, person_rgba.width, person_rgba.height)
     bg.alpha_composite(person_rgba, (person_x, person_y))
@@ -472,6 +513,109 @@ def _overlay_mascot_on_result(
     bg = _add_ambient_glow(bg, mascot_x, mascot_y, mascot_matched.width, mascot_matched.height)
 
     return bg.convert("RGB")
+
+
+def _apply_bokeh_blur(image: Image.Image, strength: float = 1.0) -> Image.Image:
+    """Apply realistic lens-bokeh blur to a background image.
+
+    Uses a large disc kernel to simulate an out-of-focus camera lens.
+    `strength` controls intensity: 1.0 = standard, 2.0 = strong, 3.0 = very strong.
+    """
+    img_arr = np.array(image.convert("RGB"), dtype=np.float32)
+    h, w = img_arr.shape[:2]
+
+    # Scale kernel size with image resolution and strength — much larger for cinematic bokeh
+    base_radius = max(11, int(min(h, w) * 0.028 * strength))
+    ksize = base_radius * 2 + 1
+
+    # Create a circular (disc) kernel for realistic bokeh look
+    kernel = np.zeros((ksize, ksize), dtype=np.float32)
+    center = ksize // 2
+    cv2.circle(kernel, (center, center), base_radius, 1.0, -1)
+    kernel /= kernel.sum()
+
+    # Apply disc blur (simulates real lens bokeh)
+    blurred = cv2.filter2D(img_arr, -1, kernel)
+
+    # Second pass with Gaussian for creamy smooth bokeh
+    gauss_ksize = max(3, (base_radius * 2 // 3) * 2 + 1)
+    blurred = cv2.GaussianBlur(blurred, (gauss_ksize, gauss_ksize), 0)
+
+    # Third pass for extra creaminess at high strength
+    if strength >= 2.0:
+        extra_ksize = max(3, base_radius) | 1
+        blurred = cv2.GaussianBlur(blurred, (extra_ksize, extra_ksize), 0)
+
+    return Image.fromarray(np.clip(blurred, 0, 255).astype(np.uint8), "RGB")
+
+
+def _apply_depth_bokeh(
+    canvas: Image.Image,
+    subject_regions: list[tuple[int, int, int, int]],
+    strength: float = 1.0,
+) -> Image.Image:
+    """Apply cinematic depth-of-field bokeh — strong blur on background, sharp subjects.
+
+    Uses a vertical depth gradient (top = far/blurry, bottom = near/sharp) combined
+    with subject masks for realistic shallow-DOF like f/1.4 DSLR portrait.
+    """
+    if canvas.mode != "RGBA":
+        canvas = canvas.convert("RGBA")
+
+    canvas_arr = np.array(canvas)
+    rgb = canvas_arr[:, :, :3].copy()
+    alpha = canvas_arr[:, :, 3].copy()
+    h, w = rgb.shape[:2]
+
+    # ── Build depth-based focus mask ──
+    # Vertical gradient: top of image = 0 (far, max blur), bottom = 1 (near, sharp)
+    depth_gradient = np.linspace(0.0, 1.0, h, dtype=np.float32)
+    depth_mask = np.tile(depth_gradient[:, np.newaxis], (1, w))
+
+    # Make the gradient steeper — only the bottom ~35% of the image is "near"
+    # This simulates a low-angle shot with shallow DOF
+    depth_mask = np.clip((depth_mask - 0.4) / 0.6, 0.0, 1.0) ** 0.7
+
+    # Create subject foreground mask
+    fg_mask = np.zeros((h, w), dtype=np.float32)
+    for (sx, sy, sw, sh) in subject_regions:
+        # Generous padding around subjects to keep edges sharp
+        pad_x = int(sw * 0.12)
+        pad_y = int(sh * 0.06)
+        x1 = max(0, sx - pad_x)
+        y1 = max(0, sy - pad_y)
+        x2 = min(w, sx + sw + pad_x)
+        y2 = min(h, sy + sh + pad_y)
+        fg_mask[y1:y2, x1:x2] = 1.0
+
+    # Ground near subjects stays semi-sharp (bottom 10%)
+    ground_line = int(h * 0.92)
+    fg_mask[ground_line:, :] = np.maximum(fg_mask[ground_line:, :], 0.3)
+
+    # Smooth the subject mask edges with a large blur for natural DOF falloff
+    blur_size = max(71, int(min(h, w) * 0.12)) | 1
+    fg_mask = cv2.GaussianBlur(fg_mask, (blur_size, blur_size), 0)
+
+    # Combine: sharp where subject OR near ground
+    focus_mask = np.maximum(fg_mask, depth_mask)
+
+    # Generate two levels of bokeh for progressive blur
+    bokeh_strong = np.array(_apply_bokeh_blur(Image.fromarray(rgb, "RGB"), strength * 1.2))
+    bokeh_medium = np.array(_apply_bokeh_blur(Image.fromarray(rgb, "RGB"), strength * 0.6))
+
+    # Multi-level blend: strong bokeh for very far areas, medium for mid-range
+    focus_3ch = focus_mask[:, :, np.newaxis]
+    mid_blend = (rgb.astype(np.float32) * 0.3 + bokeh_medium.astype(np.float32) * 0.7)
+    blended = (
+        rgb.astype(np.float32) * focus_3ch +
+        mid_blend * np.clip(1.0 - focus_3ch, 0, 0.5) * 2.0 +
+        bokeh_strong.astype(np.float32) * np.clip(0.5 - focus_3ch, 0, 0.5) * 2.0
+    )
+
+    result = canvas_arr.copy()
+    result[:, :, :3] = np.clip(blended, 0, 255).astype(np.uint8)
+    result[:, :, 3] = alpha
+    return Image.fromarray(result, "RGBA")
 
 
 def _fit_image_to_canvas(image: Image.Image, target_size: tuple[int, int]) -> Image.Image:
@@ -519,18 +663,48 @@ def _resize_by_height(image: Image.Image, target_height: int) -> Image.Image:
     )
 
 
+def _apply_golden_hour_grading(image: Image.Image, intensity: float = 0.35) -> Image.Image:
+    """Apply golden hour / sunset warm color grading to the image.
+
+    Shifts colors toward warm orange-gold tones like a sunset photo.
+    intensity: 0.0 = no change, 1.0 = full golden overlay.
+    """
+    img_arr = np.array(image.convert("RGB"), dtype=np.float32)
+
+    # Warm shift: boost red/green channels, reduce blue slightly
+    warm_tint = np.array([25.0, 12.0, -15.0]) * intensity
+    img_arr += warm_tint
+
+    # Add a golden overlay using multiply blend
+    golden = np.array([255.0, 200.0, 120.0]) / 255.0  # Warm golden color
+    img_arr = img_arr / 255.0
+    golden_blend = img_arr * (1.0 - intensity * 0.25) + (img_arr * golden) * (intensity * 0.25)
+    img_arr = golden_blend * 255.0
+
+    # Slight contrast boost for cinematic feel
+    mean = img_arr.mean()
+    img_arr = (img_arr - mean) * (1.0 + intensity * 0.15) + mean
+
+    return Image.fromarray(np.clip(img_arr, 0, 255).astype(np.uint8), "RGB")
+
+
 def _add_ground_shadow(canvas: Image.Image, x: int, y: int, width: int, height: int) -> Image.Image:
+    """Add dramatic ground shadow beneath a subject — long, directional like sunset light."""
     if canvas.mode != "RGBA":
         canvas = canvas.convert("RGBA")
 
     shadow = np.zeros((canvas.height, canvas.width, 4), dtype=np.uint8)
-    shadow_width = max(20, int(width * 0.72))
-    shadow_height = max(10, int(height * 0.10))
+    # Wider, longer shadow for dramatic cinematic look
+    shadow_width = max(30, int(width * 0.90))
+    shadow_height = max(15, int(height * 0.18))
     center_x = x + width // 2
-    center_y = min(canvas.height - 1, y + height - shadow_height // 3)
-    top_left = (max(0, center_x - shadow_width // 2), max(0, center_y - shadow_height // 2))
+    # Offset shadow slightly to the right (as if light comes from left/behind)
+    shadow_offset_x = int(width * 0.08)
+    center_y = min(canvas.height - 1, y + height - shadow_height // 4)
+
+    top_left = (max(0, center_x - shadow_width // 2 + shadow_offset_x), max(0, center_y - shadow_height // 2))
     bottom_right = (
-        min(canvas.width - 1, center_x + shadow_width // 2),
+        min(canvas.width - 1, center_x + shadow_width // 2 + shadow_offset_x),
         min(canvas.height - 1, center_y + shadow_height // 2),
     )
 
@@ -541,10 +715,10 @@ def _add_ground_shadow(canvas: Image.Image, x: int, y: int, width: int, height: 
         0,
         0,
         360,
-        (20, 20, 20, 70),
+        (15, 12, 10, 110),  # Darker, warmer shadow
         -1,
     )
-    shadow[:, :, 3] = cv2.GaussianBlur(shadow[:, :, 3], (21, 21), 0)
+    shadow[:, :, 3] = cv2.GaussianBlur(shadow[:, :, 3], (31, 31), 0)
     return Image.alpha_composite(canvas, Image.fromarray(shadow, "RGBA"))
 
 
@@ -630,10 +804,10 @@ def _add_ambient_glow(
         (center_x, center_y),
         (radius_x, radius_y),
         0, 0, 360,
-        (255, 220, 150, 18),  # Warm golden glow, very subtle
+        (255, 230, 180, 8),  # Very subtle warm glow for blending only
         -1,
     )
-    glow[:, :, 3] = cv2.GaussianBlur(glow[:, :, 3], (51, 51), 0)
+    glow[:, :, 3] = cv2.GaussianBlur(glow[:, :, 3], (71, 71), 0)
 
     glow_layer = Image.fromarray(glow, "RGBA")
     # Composite glow BEHIND mascot by compositing onto canvas first
@@ -668,7 +842,7 @@ def process_photobooth(
     Flow:
     1. Local compositing to build a clean scene reference
     2. APIFree.ai image-to-image enhancement
-    3. Local cartoon fallback if API fails
+    Raises RuntimeError if API fails.
     """
     prompt_suffix = ""
     aspect_ratio = "2:3"
@@ -689,24 +863,12 @@ def process_photobooth(
         aspect_ratio=aspect_ratio,
     )
 
-    try:
-        # Stage 2: AI enhance with 3 images (composite + face ref + mascot ref)
-        ai_result = _run_cartoon_merge(
-            composite_img=reference_scene,
-            person_img=person_img,
-            canvas_size=canvas_size,
-            prompt_suffix=prompt_suffix,
-            mascot_img=mascot_img,
-        )
-        return ai_result.convert("RGB"), True
-    except Exception as error:
-        print(f"[AI] using local cartoon fallback: {error}")
-        # Fallback: compose locally then apply basic stylization
-        reference_scene = _compose_reference_scene(
-            background_image=bg_img,
-            mascot_image=mascot_img,
-            person_image=person_img,
-            aspect_ratio=aspect_ratio,
-        )
-        fallback = _local_cartoon_from_reference(reference_scene)
-        return fallback.convert("RGB"), False
+    # Stage 2: AI enhance with 3 images (composite + face ref + mascot ref)
+    ai_result = _run_cartoon_merge(
+        composite_img=reference_scene,
+        person_img=person_img,
+        canvas_size=canvas_size,
+        prompt_suffix=prompt_suffix,
+        mascot_img=mascot_img,
+    )
+    return ai_result.convert("RGB"), True

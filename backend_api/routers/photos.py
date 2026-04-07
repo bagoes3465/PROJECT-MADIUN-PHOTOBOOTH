@@ -77,13 +77,6 @@ async def upload_photo(
     # Run face expression detection in background
     _detect_face_expression_bg(photo_data["id"], contents)
 
-    # Generate preview with removed background (for customization page)
-    preview_url = None
-    try:
-        preview_url = _generate_preview_nobg(session_id, contents)
-    except Exception as e:
-        print(f"Preview BG removal failed: {e}")
-
     return {
         "success": True,
         "message": "Photo uploaded",
@@ -91,26 +84,10 @@ async def upload_photo(
             "photo_id": photo_data["id"],
             "session_id": session_id,
             "original_url": original_url,
-            "preview_nobg_url": preview_url,
             "photo_number": photo_number,
             "status": "uploaded",
         },
     }
-
-
-def _generate_preview_nobg(session_id: str, image_bytes: bytes) -> str:
-    """Generate a background-removed preview and return as base64 data URL."""
-    import base64
-    from ml.AI_Enhancement import remove_background
-    from PIL import Image
-
-    img = Image.open(BytesIO(image_bytes))
-    nobg = remove_background(img)
-
-    buf = BytesIO()
-    nobg.save(buf, format="PNG")
-    b64 = base64.b64encode(buf.getvalue()).decode("ascii")
-    return f"data:image/png;base64,{b64}"
 
 
 def _detect_face_expression_bg(photo_id: str, image_bytes: bytes):

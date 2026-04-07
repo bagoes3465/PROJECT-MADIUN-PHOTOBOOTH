@@ -3,7 +3,7 @@ import PrimaryButton from '../components/PrimaryButton';
 import { api } from '../services/api';
 import '../styles/customize.css';
 
-export default function Customize({ capturedImage, previewNoBgUrl, onBack, onNext }) {
+export default function Customize({ capturedImage, onBack, onNext }) {
   const [backgrounds, setBackgrounds] = useState([]);
   const [mascots, setMascots] = useState([]);
   const [filters, setFilters] = useState([]);
@@ -14,7 +14,6 @@ export default function Customize({ capturedImage, previewNoBgUrl, onBack, onNex
   const [selectedFilter, setSelectedFilter] = useState('');
   const [timeLeft, setTimeLeft] = useState(300);
 
-  // Fetch assets
   useEffect(() => {
     Promise.all([api.getBackgrounds(), api.getMascots(), api.getFilters()])
       .then(([bg, ms, fl]) => {
@@ -29,7 +28,6 @@ export default function Customize({ capturedImage, previewNoBgUrl, onBack, onNex
       .finally(() => setLoading(false));
   }, []);
 
-  // Countdown timer
   useEffect(() => {
     if (timeLeft <= 0) return;
     const t = setTimeout(() => setTimeLeft(timeLeft - 1), 1000);
@@ -45,10 +43,6 @@ export default function Customize({ capturedImage, previewNoBgUrl, onBack, onNex
       filterId: selectedFilter || null,
     });
   };
-
-  const currentBg = backgrounds.find((b) => b.id === selectedBg);
-  const currentMascot = mascots.find((m) => m.id === selectedMascot);
-  const currentFilter = filters.find((f) => f.id === selectedFilter);
 
   if (loading) {
     return (
@@ -74,31 +68,7 @@ export default function Customize({ capturedImage, previewNoBgUrl, onBack, onNex
 
       <main className="pb-customize-main">
         <h2 className="pb-section-title">Kustomisasi Foto</h2>
-
-        {/* Preview */}
-        <section className="pb-preview">
-          <div className="pb-preview-canvas">
-            {currentBg && (
-              <img src={currentBg.image_url} alt="bg" className="pb-preview-bg" />
-            )}
-            {(previewNoBgUrl || capturedImage) && (
-              <img
-                src={previewNoBgUrl || capturedImage}
-                alt="foto"
-                className="pb-preview-photo"
-              />
-            )}
-            {currentMascot && (
-              <img src={currentMascot.image_url} alt="maskot" className="pb-preview-mascot" />
-            )}
-            {currentFilter && (
-              <div className="pb-preview-filter-label">{currentFilter.name}</div>
-            )}
-          </div>
-          {previewNoBgUrl && (
-            <p className="pb-preview-hint">* Preview — hasil akhir akan diproses oleh AI</p>
-          )}
-        </section>
+        <p className="pb-customize-desc">Pilih background, maskot, dan filter untuk foto kamu</p>
 
         {/* Backgrounds */}
         <section className="pb-section">
@@ -120,7 +90,7 @@ export default function Customize({ capturedImage, previewNoBgUrl, onBack, onNex
 
         {/* Mascots */}
         <section className="pb-section">
-          <h3>🎨 Pilih Maskot</h3>
+          <h3>🎭 Pilih Maskot</h3>
           <div className="pb-grid">
             {mascots.map((m) => (
               <div
