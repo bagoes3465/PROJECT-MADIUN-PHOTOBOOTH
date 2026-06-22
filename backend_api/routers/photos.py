@@ -28,7 +28,7 @@ async def upload_photo(
     session_id: str = Form(...),
     photo: UploadFile = File(...),
 ):
-    """Upload a photo to a session."""
+    """Upload a photo to a session, then detect face expression before responding."""
     db = get_supabase()
 
     # Verify session exists and is active
@@ -85,61 +85,84 @@ async def upload_photo(
         raise HTTPException(500, "Failed to save photo record")
 
     photo_data = result.data[0]
+    photo_id = photo_data["id"]
 
-    # Run face expression detection in background thread
-    thread = threading.Thread(
-        target=_detect_face_expression_bg,
-        args=(photo_data["id"], contents),
-        daemon=True,
-    )
-    thread.start()
+    # Detect face expression SYNCHRONOUSLY — must finish and be saved to DB
+    # before this endpoint responds, so the frontend can rely on it being
+    # present right away (no race condition with /process).
+    expression_result = _detect_and_save_face_expression(photo_id, contents)
 
     return {
         "success": True,
         "message": "Photo uploaded",
         "data": {
-            "photo_id": photo_data["id"],
+            "photo_id": photo_id,
             "session_id": session_id,
             "original_url": original_url,
             "photo_number": photo_number,
             "status": "uploaded",
+            "face_expression": expression_result["expression"],
+            "face_expression_label": expression_result["expression_label"],
+            "face_confidence": expression_result["confidence"],
         },
     }
 
 
-def _detect_face_expression_bg(photo_id: str, image_bytes: bytes):
-    """Run face expression detection (sync, called after upload)."""
+def _detect_and_save_face_expression(photo_id: str, image_bytes: bytes) -> dict:
+    """
+    Run face expression detection and persist the result to the database.
+
+    Called synchronously from /upload so the expression is guaranteed to be
+    saved before the upload response is returned.
+
+    Returns a dict with the best detection (or all-None values if no face
+    was detected / detection failed) so the caller can include it in the
+    response without a second DB round-trip.
+    """
+    empty_result = {"expression": None, "expression_label": None, "confidence": None}
+
     try:
         from ml.face_expression import detect_expression
         from PIL import Image
-        from io import BytesIO
 
         img = Image.open(BytesIO(image_bytes))
         expressions = detect_expression(img)
 
-        if expressions:
-            db = get_supabase()
-            best = expressions[0]
+        if not expressions:
+            return empty_result
 
-            # Save to face_expressions table
-            db.table("face_expressions").insert({
-                "photo_id": photo_id,
-                "expression": best["expression"],
-                "confidence": best["confidence"],
-                "bbox_x1": best.get("bbox", [0, 0, 0, 0])[0],
-                "bbox_y1": best.get("bbox", [0, 0, 0, 0])[1],
-                "bbox_x2": best.get("bbox", [0, 0, 0, 0])[2],
-                "bbox_y2": best.get("bbox", [0, 0, 0, 0])[3],
-            }).execute()
+        db = get_supabase()
+        best = expressions[0]
+        bbox = best.get("bbox", [0, 0, 0, 0])
 
-            # Update photo with primary expression
-            db.table("photos").update({
-                "face_expression": best["expression"],
-                "face_confidence": best["confidence"],
-            }).eq("id", photo_id).execute()
+        # Save to face_expressions table
+        db.table("face_expressions").insert({
+            "photo_id": photo_id,
+            "expression": best["expression"],
+            "confidence": best["confidence"],
+            "bbox_x1": bbox[0],
+            "bbox_y1": bbox[1],
+            "bbox_x2": bbox[2],
+            "bbox_y2": bbox[3],
+        }).execute()
+
+        # Update photo with primary expression
+        db.table("photos").update({
+            "face_expression": best["expression"],
+            "face_confidence": best["confidence"],
+        }).eq("id", photo_id).execute()
+
+        return {
+            "expression": best["expression"],
+            "expression_label": best.get("expression_label", best["expression"]),
+            "confidence": best["confidence"],
+        }
 
     except Exception as e:
+        # Face expression is a best-effort enhancement — never block the
+        # upload flow if detection or the API call fails.
         print(f"Face expression detection failed: {e}")
+        return empty_result
 
 
 @router.post("/process")

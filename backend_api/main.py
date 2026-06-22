@@ -15,7 +15,7 @@ import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from config import settings
-from routers import health, sessions, photos, assets
+from routers import health, sessions, photos, assets, mood
 
 app = FastAPI(
     title="AI Photobooth Kota Madiun",
@@ -37,6 +37,7 @@ app.include_router(health.router, prefix="/api")
 app.include_router(sessions.router, prefix="/api")
 app.include_router(photos.router, prefix="/api")
 app.include_router(assets.router, prefix="/api")
+app.include_router(mood.router, prefix="/api")
 
 
 @app.get("/")
